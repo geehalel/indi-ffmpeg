@@ -1,0 +1,1 @@
+ffplay -loop 0 ~/Astro/FO-aquarii-120-120.avi -vf "lutyuv=u=128:v=128:y=255*(val-16)/(235-16),eq=gamma=1/2.2,tblend=c0_mode=addition,tblend=c0_mode=addition,tblend=c0_mode=addition,tblend=c0_mode=addition,tblend=c0_mode=addition"

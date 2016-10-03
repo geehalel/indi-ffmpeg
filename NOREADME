@@ -1,0 +1,6 @@
+WORK IN PROGRESS
+
+Ubuntu:
+  - install ffmpeg dev packages:
+sudo apt-get install ffmpeg libavcodec-ffmpeg-dev libavdevice-ffmpeg-dev libavfilter-ffmpeg-dev libavformat-ffmpeg-dev libavresample-ffmpeg-dev libavutil-ffmpeg-dev libpostproc-ffmpeg-dev libswresample-ffmpeg-dev libswscale-ffmpeg-dev
+

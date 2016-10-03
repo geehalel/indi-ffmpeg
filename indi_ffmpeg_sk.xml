@@ -1,0 +1,10 @@
+<INDIDriver>
+<defSwitchVector device="FFMpeg" name="VIDEO_STREAM" label="Video Stream" group="Main Control" state="Idle" perm="rw" rule="OneOfMany">
+<defSwitch name="STREAM_ON" label="Stream On">
+Off
+</defSwitch>
+<defSwitch name="STREAM_OFF" label="Stream Off">
+On
+</defSwitch>
+</defSwitchVector>
+</INDIDriver>
