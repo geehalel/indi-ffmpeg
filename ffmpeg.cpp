@@ -1,7 +1,16 @@
+// stacking with ffmpeg
+// ffplay -loop 1 -vf 'scale=out_range=pc,format=pix_fmts=gray16le,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average, framestep=2,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average,framestep=2,setpts=0.04' FO-aquarii-120-120.avi 
+// catch kstars output with x11grab
+//ffplay -video_size 720x576 -framerate 2 -f x11grab -i :0.0+100,15
+
 //#include <unistd.h>
 //#include <memory>
 //#include <signal.h>
 #include <zlib.h>
+// test if we can open device alongside ffmpeg
+       #include <sys/types.h>
+       #include <sys/stat.h>
+       #include <fcntl.h>
 
 #include "ffmpeg.h"
 #ifdef __cplusplus
@@ -54,13 +63,13 @@ static void print_option(const AVClass *tclass, const AVOption *o, const char *p
     }
 }
 
-static void show_opts(const AVClass *tclass, const char *prefix)
+static void show_opts(const AVClass *tclass, const char *prefix, int flags=0xFFFFFFFF)
 {
     const AVOption *o = NULL;
 
     fprintf(stderr,"%sAVOption for class %s\n", prefix, tclass->class_name);
     while ((o = av_opt_next(&tclass, o)))
-        if (o->type != AV_OPT_TYPE_CONST)
+      if ((o->type != AV_OPT_TYPE_CONST) && (o->flags & flags))
 	  print_option(tclass, o, prefix);
     fprintf(stderr,"%send Option\n", prefix);
 }
@@ -163,42 +172,89 @@ FFMpeg::FFMpeg()
   av_register_all();
   avdevice_register_all();
   AVInputFormat * d=NULL;
-  show_opts(avformat_get_class(), "");
+  AVInputFormat * dinput=NULL;
+  AVOutputFormat * doutput=NULL;
+  void *enum_protocols=NULL;
+  const char *protocol_name;
+  
+  fprintf(stderr, "Available AvInputFormats\n");
+  while (dinput = av_iformat_next(dinput)) {
+    fprintf(stderr, "  %s: %s\n", dinput->name, dinput->long_name);
+    //if (dinput->priv_class) show_opts(dinput->priv_class, "  ");
+  }
+  fprintf(stderr, "Available Input protocols\n");
+  while (protocol_name = avio_enum_protocols(&enum_protocols, 0)) {
+    fprintf(stderr, "  %s\n", protocol_name);
+  }
+  
+  //show_opts(avformat_get_class(), "");
+
+  fprintf(stderr, "Available AvOutputFormats\n");
+  while (doutput = av_oformat_next(doutput)) {
+    fprintf(stderr, "  %s: %s\n", doutput->name, doutput->long_name);
+    //if (doutput->priv_class) show_opts(doutput->priv_class, "  ");
+  }
+  fprintf(stderr, "Available Output protocols\n");
+  while (protocol_name = avio_enum_protocols(&enum_protocols, 1)) {
+    fprintf(stderr, "  %s\n", protocol_name);
+  }
+  
   fprintf(stderr, "Available Video Input devices\n");
   while (d = av_input_video_device_next(d)) {
-    fprintf(stderr, "%s: %s\n", d->name, d->long_name);
-    if (d->priv_class) show_opts(d->priv_class, "  ");
-    struct AVDeviceInfoList *devlist = NULL;
-    int nbdev=0;
-    /*
-    struct AVDictionary *options=NULL;
-    AVDictionaryEntry *pelem = NULL;
-
-
-    fprintf(stderr, "  Options AVDictionary\n");
-    while (pelem=av_dict_get(options, "", pelem, AV_DICT_IGNORE_SUFFIX)) {
-      fprintf(stderr, "    %s : %s\n", pelem->key, pelem->value);
-    }
-    */
-    fprintf(stderr, "  Input sources\n");
     if (!d->get_device_list) {
-      fprintf(stderr, "Can not list sources. Not implemented.\n");
+      fprintf(stderr, "  %s: %s (source list not implemented)\n", d->name, d->long_name);
+      //if (d->priv_class) show_opts(d->priv_class, "  ");
       continue;
     }
+    int nbdev=0;
+    struct AVDeviceInfoList *devlist = NULL;
     nbdev=avdevice_list_input_sources(d, NULL, NULL, &devlist);
-    int i;
-    if (nbdev <0) {
-      fprintf(stderr, "    Can not list sources\n");
+    if ((nbdev < 0 ) || (devlist->nb_devices==0)) {
+      fprintf(stderr, "  %s: %s (source list empty)\n", d->name, d->long_name);
+      //if (d->priv_class) show_opts(d->priv_class, "  ");
       avdevice_free_list_devices(&devlist);
       continue;
     }
+    fprintf(stderr, "  %s: %s\n", d->name, d->long_name); 
+    fprintf(stderr, "  Input sources\n");
+    int i;
     for (i = 0; i < devlist->nb_devices; i++) {
-      fprintf(stderr, "    %s %s [%s]\n", devlist->default_device == i ? "*" : " ",
+      fprintf(stderr, "     %s %s [%s]\n", devlist->default_device == i ? "*" : " ",
+	     devlist->devices[i]->device_name, devlist->devices[i]->device_description);
+    }
+    //fprintf(stderr, "  Found %d devices\n", devlist->nb_devices);
+    avdevice_free_list_devices(&devlist);
+  }
+
+  doutput=NULL;
+  fprintf(stderr, "Available Video Output devices\n");
+  while (doutput = av_output_video_device_next(doutput)) {
+    if (!doutput->get_device_list) {
+      fprintf(stderr, "  %s: %s (sink list not implemented)\n", doutput->name, doutput->long_name);
+      //if (doutput->priv_class) show_opts(doutput->priv_class, "  ");
+      continue;
+    }
+    int nbdev=0;
+    struct AVDeviceInfoList *devlist = NULL;
+    nbdev=avdevice_list_output_sinks(doutput, NULL, NULL, &devlist);
+    if (nbdev <= 0 ){
+      fprintf(stderr, "  %s: %s (sink list empty)\n", doutput->name, doutput->long_name);
+      //if (doutput->priv_class) show_opts(doutput->priv_class, "  ");
+      avdevice_free_list_devices(&devlist);
+      continue;
+    }
+    fprintf(stderr, "  %s: %s\n", doutput->name, doutput->long_name); 
+    fprintf(stderr, "  Output sinks\n");
+    int i;
+    for (i = 0; i < devlist->nb_devices; i++) {
+      fprintf(stderr, "     %s %s [%s]\n", devlist->default_device == i ? "*" : " ",
 	     devlist->devices[i]->device_name, devlist->devices[i]->device_description);
     }
     fprintf(stderr, "  Found %d devices\n", devlist->nb_devices);
     avdevice_free_list_devices(&devlist);
   }
+  
+  
   fprintf(stderr, "\n");
   /*
   AVInputFormat *p = NULL;
@@ -233,7 +289,6 @@ FFMpeg::FFMpeg()
     }
   */
 
-  
   compressedFrame=(unsigned char *)malloc(1);
   join_thread=false;
   
@@ -269,18 +324,13 @@ bool FFMpeg::Connect(char *device)
       connect->s=IPS_BUSY;
       IDSetSwitch(connect,"Connecting to device %s", device);
     }
-    /*
-    pInFmt = av_find_input_format("video4linux2");
-    if( !pInFmt ){
-      DEBUG(INDI::Logger::DBG_SESSION,"Failed to find video4llinux2 input format!");
-      return false;
-    }
-    */
+
     if (avformat_open_input(&pFormatCtx, device, NULL, NULL)!=0) {
       DEBUG(INDI::Logger::DBG_SESSION,"Failed to open the video device, video file or image sequence!");
       return false;
     }
-    
+    int fd = open(device, O_RDWR /* required */ | O_NONBLOCK, 0);
+    close(fd);
     AVDeviceCapabilitiesQuery *caps=NULL;
     fprintf(stderr, "Getting capabilities\n");
     if (avdevice_capabilities_create(&caps, pFormatCtx, NULL) >=0) {
@@ -324,18 +374,16 @@ bool FFMpeg::Connect(char *device)
       return false;
     }
 
-    show_opts(pCodecCtx->av_class,"");
-    if (pCodec->priv_class)
-      show_opts(pCodec->priv_class,"");
+    //show_opts(pCodecCtx->av_class,"", AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM);
+    //if (pCodec->priv_class)
+    //  show_opts(pCodec->priv_class,"", AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM);
     /*const AVOption *o = NULL;
     fprintf(stderr, "Options for ACodecContext\n");
     while (o = av_opt_next(pCodecCtx, o))
       fprintf(stderr, "  %s: %s\n", o->name, o->help); 
     */
     fprintf(stderr, "\n");
-    /*struct video_data *s = (struct video_data *)pFormatCtx->priv_data;
-    fprintf(stderr,"Device descriptor is %d\n", s->fd);
-    */
+    
     DEBUGF(INDI::Logger::DBG_SESSION, "Successfully connected to %s.", device);
     return true;
     
@@ -397,7 +445,6 @@ void FFMpeg::ISGetProperties(const char *dev)
         
     if (isConnected())
     {
-      defineSwitch(VideoStreamSP);
       //defineNumber(&FFMpegControlsNP);
     }    
 
@@ -415,23 +462,17 @@ bool FFMpeg::updateProperties()
     DEBUGF(INDI::Logger::DBG_SESSION, "updateProperties connected=%s", (isConnected()?"True":"False"));
     if (isConnected())
     {
-      //buildSkeleton("indi_ffmpeg_sk.xml"); // defined only VIDEO_STREAM
-      //VideoStreamSP=getSwitch("VIDEO_STREAM"); // replaced here with indi ccd streaming
-      VideoStreamSP=getSwitch("CCD_VIDEO_STREAM");
       
       StreamFrameBP=getBLOB("CCD1");
       StreamFrame=StreamFrameBP->bp;
       
-      defineSwitch(VideoStreamSP);
-      
-      //addFFMpegControls();
+       //addFFMpegControls();
       //defineNumber(&FFMpegControlsNP);
 
     }
     else
     {
-    // We're disconnected
-      deleteProperty(VideoStreamSP->name);
+      // We're disconnected
       //deleteProperty(FFMpegControlsNP.name);
       //free(FFMpegControlsNP.np);
       //FFMpegControlsNP.nnp=0;
@@ -478,31 +519,6 @@ bool FFMpeg::ISNewSwitch (const char *dev, const char *name, ISState *states, ch
       return true;
 
     DEBUGF(INDI::Logger::DBG_SESSION, "Setting switch %s", name);
-    /* Video Stream */
-    // use constant prop name here as VideoStreamSP is not defined on connection !!
-    /*
-      if (!strcmp(name, "CCD_VIDEO_STREAM")) {
-      // called by kstars when closing window AND after disconnect
-      IUResetSwitch(VideoStreamSP);
-      IUUpdateSwitch(VideoStreamSP, states, names, n);
-    
-      if (VideoStreamSP->sp[0].s == ISS_ON) {
-	if ((!is_streaming)) { 
-	  VideoStreamSP->s  = IPS_BUSY; 
-	  DEBUG(INDI::Logger::DBG_SESSION, "Starting the video stream.");
-	  start_streaming();
-	}
-      } else {
-	VideoStreamSP->s = IPS_IDLE;       
-	if (is_streaming) {
-	  DEBUG(INDI::Logger::DBG_SESSION, "The video stream has been disabled.");
-	  stop_streaming();
-	}
-      }
-      IDSetSwitch(VideoStreamSP, NULL);
-      return true;
-    }
-    */
 
     return INDI::CCD::ISNewSwitch(dev,name,states,names,n);
 }
@@ -547,10 +563,6 @@ void FFMpeg::start_capturing()
 {
     if (is_capturing) return;
     is_capturing=true;
-    if (join_thread) {
-      capture_thread.join();
-      join_thread=false;
-    }
     capture_thread=std::thread(RunCaptureThread, this);
 }
 
@@ -560,8 +572,6 @@ void FFMpeg::stop_capturing()
     is_capturing=false;
     if (std::this_thread::get_id() != capture_thread.get_id())
       capture_thread.join();
-    else
-      join_thread=true;
 }
 
 void FFMpeg::start_streaming()
@@ -594,6 +604,8 @@ void FFMpeg::run_capture()
   struct SwsContext *sws_ctx = NULL;
   int frameFinished;
   AVPacket packet;
+  AVPixelFormat out_pix_fmt=AV_PIX_FMT_RGB24;
+
   
   // Allocate video frame
   pFrame=av_frame_alloc();
@@ -601,52 +613,40 @@ void FFMpeg::run_capture()
   pFrameRGB=av_frame_alloc();
   if(pFrameRGB==NULL)
     return ;
-  // Determine required buffer size and allocate buffer
-  //numBytes=avpicture_get_size(PIX_FMT_RGBA, pCodecCtx->width,
-  //                          pCodecCtx->height);
-  //numBytes=av_image_get_buffer_size(AV_PIX_FMT_RGBA, pCodecCtx->width,
-  //    pCodecCtx->height, 1);
-  numBytes=av_image_get_buffer_size(pCodecCtx->pix_fmt, pCodecCtx->width,
-				    pCodecCtx->height, 1);
+  // Determine required buffer size and allocate buffer for pframeRGB
+  numBytes=av_image_get_buffer_size(out_pix_fmt, pCodecCtx->width,
+      pCodecCtx->height, 1);
   buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
+
   // Assign appropriate parts of buffer to image planes in pFrameRGB
-  // Note that pFrameRGB is an AVFrame, but AVFrame is a superset
-  // of AVPicture
-  //avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGBA,
-  //		 pCodecCtx->width, pCodecCtx->height);
-  av_image_fill_arrays (pFrameRGB->data, pFrameRGB->linesize, buffer, AV_PIX_FMT_RGBA,
+  av_image_fill_arrays (pFrameRGB->data, pFrameRGB->linesize, buffer, out_pix_fmt,
   			pCodecCtx->width, pCodecCtx->height, 1);
-  //av_image_fill_arrays (pFrameRGB->data, pFrameRGB->linesize, buffer, pCodecCtx->pix_fmt,
-  //		pCodecCtx->width, pCodecCtx->height, 1);
-
-  //streamer->setPixelFormat(pCodecCtx->pix_fmt);
-  //streamer->setRecorderSize(w,h);
-
 
   // initialize SWS context for software scaling
-  /*sws_ctx = sws_getContext(pCodecCtx->width,
+  sws_ctx = sws_getContext(pCodecCtx->width,
 			   pCodecCtx->height,
 			   pCodecCtx->pix_fmt,
 			   pCodecCtx->width,
 			   pCodecCtx->height,
-			   AV_PIX_FMT_RGBA,
+			   out_pix_fmt,
 			   SWS_BILINEAR,
 			   NULL,
 			   NULL,
 			   NULL
 			   );
-  */
-  ISwitch *compress=IUFindSwitch(getSwitch("CCD_COMPRESSION"), "CCD_COMPRESS");
-
+  
+  //streamer->setPixelFormat(ff_fmt_ff2v4l(pFrameRGB->format,AV_CODEC_ID_RAWVIDEO));
+  streamer->setPixelFormat(V4L2_PIX_FMT_RGB24);
+  streamer->setRecorderSize(pCodecCtx->width, pCodecCtx->height);
+  
   PrimaryCCD.setFrameBufferSize(numBytes);
-  PrimaryCCD.setFrame(0, 0, pCodecCtx->width, pCodecCtx->height);
   PrimaryCCD.setResolution(pCodecCtx->width, pCodecCtx->height);
+  PrimaryCCD.setFrame(0, 0, pCodecCtx->width, pCodecCtx->height);
 
   PrimaryCCD.setBPP(8);
 
-  PrimaryCCD.setNAxis(2);
-
-  //PrimaryCCD.setNAxis(3);
+  PrimaryCCD.setNAxis(3);
+  PrimaryCCD.setFrameBuffer(pFrameRGB->data[0]);
 
   while (is_capturing) {
 
@@ -663,55 +663,32 @@ void FFMpeg::run_capture()
       // Did we get a video frame?
       if(frameFinished) {
 	// Convert the image from its native format to RGB
-        /*sws_scale(sws_ctx, (uint8_t const * const *)pFrame->data,
+        sws_scale(sws_ctx, (uint8_t const * const *)pFrame->data,
 		  pFrame->linesize, 0, pCodecCtx->height,
 		  pFrameRGB->data, pFrameRGB->linesize);
-	*/
+	
 	if (is_streaming) {
-	  uLong totalBytes=0;
-	  uLongf compressedBytes=0;
-	  int r;
     
 	  // use indi streamer class
-	  streamer->newFrame((uint8_t *)pFrame->data[0]);
-	  // totalBytes=numBytes;
-	  // if (compress->s == ISS_ON) {
-	  //   compressedFrame = (unsigned char *) realloc (compressedFrame, sizeof(unsigned char) * totalBytes + totalBytes / 64 + 16 + 3);
-	  //   compressedBytes = sizeof(unsigned char) * totalBytes + totalBytes / 64 + 16 + 3;
-	  //   //r = compress2(compressedFrame, &compressedBytes, pFrameRGB->data[0], totalBytes, 4);
-	  //   r = compress2(compressedFrame, &compressedBytes, pFrame->data[0], totalBytes, 4);
-	  //   if (r != Z_OK) {
-	  //     /* this should NEVER happen */
-	  //     DEBUGF(INDI::Logger::DBG_WARNING,"internal error - compression failed: %d\n", r);
-	  //     //return;
-	  //   }
-	  //   /* Send it compressed */
-	  //   StreamFrame->blob = compressedFrame;
-	  //   StreamFrame->bloblen = compressedBytes;
-	  //   StreamFrame->size = totalBytes;
-	  //   strcpy(StreamFrame->format, ".stream.z");
-	    
-	  // } else {
-	  //   //StreamFrame->blob = pFrameRGB->data[0];
-	  //   StreamFrame->blob = pFrame->data[0];
-	  //   StreamFrame->bloblen = totalBytes;
-	  //   StreamFrame->size = totalBytes;
-	  //   strcpy(StreamFrame->format, ".stream");
-	  // }
-	  StreamFrameBP->s = IPS_OK;
-	  IDSetBLOB (StreamFrameBP, NULL);
+	  streamer->newFrame();
+	  
+	  
 	} // end streaming
       } // end frameFinished
     } // packet videoStream
     //av_free_packet(&packet);
     av_packet_unref(&packet);    
   } // end is_capturing
+
+
+  // Free the sws_context
+  sws_freeContext(sws_ctx);
   
   // Free the RGB image
   av_free(buffer);
   av_free(pFrameRGB);
 
-  // Free the YUV frame
+  // Free the input frame
   av_free(pFrame);
 
   DEBUG(INDI::Logger::DBG_SESSION,"Capture thread releasing device.");
