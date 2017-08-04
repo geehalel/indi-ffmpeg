@@ -1,3 +1,6 @@
+// overlay 2 v4l2 and resize square pal
+//ffmpeg -i /dev/video0 -i /dev/video1 -filter_complex [0:v]scale=768x576[i0]\;[i0][1:v]overlay[out] -map [out] -f opengl "overlay"
+
 // stacking with ffmpeg
 // ffplay -loop 1 -vf 'scale=out_range=pc,format=pix_fmts=gray16le,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average, framestep=2,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average,framestep=2,tblend=c0_mode=average,framestep=2,setpts=0.04' FO-aquarii-120-120.avi 
 // catch kstars output with x11grab
@@ -162,7 +165,6 @@ FFMpeg::FFMpeg()
 {
   setVersion(FFMPEG_VERSION_MAJOR, FFMPEG_VERSION_MINOR);
   //fprintf(stderr, "FFMpeg Build Information: %s", cv::getBuildInformation().c_str());
-  pInFmt = NULL;
   pFormatCtx = NULL;
   pCodecCtx = NULL;
   pCodec = NULL;
@@ -180,7 +182,7 @@ FFMpeg::FFMpeg()
   fprintf(stderr, "Available AvInputFormats\n");
   while (dinput = av_iformat_next(dinput)) {
     fprintf(stderr, "  %s: %s\n", dinput->name, dinput->long_name);
-    //if (dinput->priv_class) show_opts(dinput->priv_class, "  ");
+    if (dinput->priv_class) show_opts(dinput->priv_class, "  ");
   }
   fprintf(stderr, "Available Input protocols\n");
   while (protocol_name = avio_enum_protocols(&enum_protocols, 0)) {
@@ -215,7 +217,7 @@ FFMpeg::FFMpeg()
       avdevice_free_list_devices(&devlist);
       continue;
     }
-    fprintf(stderr, "  %s: %s\n", d->name, d->long_name); 
+    fprintf(stderr, "  %s: %s\n", d->name, d->long_name);
     fprintf(stderr, "  Input sources\n");
     int i;
     for (i = 0; i < devlist->nb_devices; i++) {
@@ -289,9 +291,6 @@ FFMpeg::FFMpeg()
     }
   */
 
-  compressedFrame=(unsigned char *)malloc(1);
-  join_thread=false;
-  
 }
 
 FFMpeg::~FFMpeg()
@@ -349,7 +348,7 @@ bool FFMpeg::Connect(char *device)
     
     videoStream=-1;
     for(i=0; i<pFormatCtx->nb_streams; i++)
-      if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO) {
+      if(pFormatCtx->streams[i]->codecpar->codec_type==AVMEDIA_TYPE_VIDEO) {
 	videoStream=i;
 	fprintf(stderr, "stream %d\n", i);
 	//break;
@@ -359,10 +358,11 @@ bool FFMpeg::Connect(char *device)
       return false;
     }
  
-    // Get a pointer to the codec context for the video stream
-    pCodecCtx=pFormatCtx->streams[videoStream]->codec;
+    // Allocate a pointer to the codec context for the video stream
+    pCodec=avcodec_find_decoder(pFormatCtx->streams[videoStream]->codecpar->codec_id);
+    pCodecCtx=avcodec_alloc_context3(pCodec);
+    avcodec_parameters_to_context(pCodecCtx, pFormatCtx->streams[videoStream]->codecpar);
 
-    pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
     if(pCodec==NULL) {
       DEBUG(INDI::Logger::DBG_SESSION,"Unsupported codec!");
       return false;      
@@ -463,10 +463,7 @@ bool FFMpeg::updateProperties()
     if (isConnected())
     {
       
-      StreamFrameBP=getBLOB("CCD1");
-      StreamFrame=StreamFrameBP->bp;
-      
-       //addFFMpegControls();
+      //addFFMpegControls();
       //defineNumber(&FFMpegControlsNP);
 
     }
@@ -635,9 +632,9 @@ void FFMpeg::run_capture()
 			   NULL
 			   );
   
-  //streamer->setPixelFormat(ff_fmt_ff2v4l(pFrameRGB->format,AV_CODEC_ID_RAWVIDEO));
-  streamer->setPixelFormat(V4L2_PIX_FMT_RGB24);
-  streamer->setRecorderSize(pCodecCtx->width, pCodecCtx->height);
+  //Streamer->setPixelFormat(ff_fmt_ff2v4l(pFrameRGB->format,AV_CODEC_ID_RAWVIDEO));
+  Streamer->setPixelFormat(V4L2_PIX_FMT_RGB24);
+  Streamer->setRecorderSize(pCodecCtx->width, pCodecCtx->height);
   
   PrimaryCCD.setFrameBufferSize(numBytes);
   PrimaryCCD.setResolution(pCodecCtx->width, pCodecCtx->height);
@@ -658,8 +655,9 @@ void FFMpeg::run_capture()
     }
     if(packet.stream_index==videoStream) {
       // Decode video frame
-      avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
-    
+      // Deprecated
+      /*
+	avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
       // Did we get a video frame?
       if(frameFinished) {
 	// Convert the image from its native format to RGB
@@ -669,12 +667,45 @@ void FFMpeg::run_capture()
 	
 	if (is_streaming) {
     
-	  // use indi streamer class
-	  streamer->newFrame();
+	  // use indi Streamer class
+	  Streamer->newFrame();
 	  
 	  
 	} // end streaming
-      } // end frameFinished
+      } // end frameFinished    
+      */
+      int ret;
+      ret = avcodec_send_packet(pCodecCtx, &packet);
+      if (ret < 0) {
+        DEBUG(INDI::Logger::DBG_SESSION, "Error sending a packet for decoding");
+	is_capturing=false; is_streaming=false; 
+	// TODO close nicely
+	break;
+      }
+      while (ret >= 0) {
+        ret = avcodec_receive_frame(pCodecCtx, pFrame);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+	  continue;
+        else if (ret < 0) {
+	  DEBUG(INDI::Logger::DBG_SESSION, "Error during decoding");
+	  is_capturing=false; is_streaming=false; 
+	  // TODO close nicely
+	  break;	  
+        }
+	// We have a frame at that point
+	// Convert the image from its native format to RGB
+        sws_scale(sws_ctx, (uint8_t const * const *)pFrame->data,
+		  pFrame->linesize, 0, pCodecCtx->height,
+		  pFrameRGB->data, pFrameRGB->linesize);
+	
+	if (is_streaming) {
+    
+	  // use indi Streamer class
+	  Streamer->newFrame();
+	  
+	  
+	} // end streaming
+      } // end while receive_frame
     } // packet videoStream
     //av_free_packet(&packet);
     av_packet_unref(&packet);    

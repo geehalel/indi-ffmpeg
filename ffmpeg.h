@@ -48,16 +48,10 @@ protected:
     
 private:
     IText CaptureDeviceT[2];
-    ISwitchVectorProperty *VideoStreamSP;
     ITextVectorProperty CaptureDeviceTP;
     INumberVectorProperty FFMpegControlsNP;
 
-    IBLOB *StreamFrame;
-    IBLOBVectorProperty *StreamFrameBP;
-
-
     std::thread capture_thread;
-    bool join_thread;
     static void RunCaptureThread(FFMpeg *ffmpeg);
     void run_capture();
     bool is_capturing;
@@ -67,16 +61,14 @@ private:
     void start_streaming();
     void stop_streaming();
 
-    AVInputFormat   *pInFmt;
     AVFormatContext *pFormatCtx;
     int              videoStream;
     AVCodecContext  *pCodecCtx;
     AVCodec         *pCodec;
-    AVDictionary    *optionsDict;
     AVFrame         *pFrame; 
     AVFrame         *pFrameRGB;
-    
-    unsigned char *compressedFrame;
 
+    AVDictionary *optionsDict;
+    
 };
 #endif // FFMPEG_H
